@@ -4,7 +4,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import tensorflow as tf
-import tfplot
+# import tfplot
 
 
 def visualize_graph(G, filename=None):
@@ -51,10 +51,10 @@ def plot_data(data, outfile):
 #    return img.figure
 
 
-def plot_num_incorrect_edges_per_graph(n_nodes, n_incorrect):
-    fig, ax = tfplot.subplots(figsize=(12, 9))
-    img = ax.scatter(n_nodes, n_incorrect, c='blue')
-    return img.figure
+# def plot_num_incorrect_edges_per_graph(n_nodes, n_incorrect):
+#     fig, ax = tfplot.subplots(figsize=(12, 9))
+#     img = ax.scatter(n_nodes, n_incorrect, c='blue')
+#     return img.figure
 
 
 # Save graph node trajectories.

@@ -30,7 +30,7 @@ tfd = tfp.distributions
 tfb = tfp.bijectors
 
 from gnn import *
-from grevnet import *
+# from grevnet import *
 from grevnet_synthetic_data import *
 from utils import *
 warnings.filterwarnings("ignore")
@@ -145,8 +145,8 @@ if not logdir_prefix:
 LOGDIR = os.path.join(logdir_prefix, FLAGS.logdir)
 imgs_dir = os.path.join(LOGDIR, 'imgs')
 pickle_dir = os.path.join(LOGDIR, 'pickle_files')
-os.makedirs(imgs_dir)
-os.makedirs(pickle_dir)
+os.makedirs(imgs_dir, exist_ok=True)
+os.makedirs(pickle_dir, exist_ok=True)
 
 DATASET = DATASETS_MAP[FLAGS.dataset]
 
@@ -279,13 +279,14 @@ grevnet = GRevNet(
     FLAGS.num_coupling_layers,
     FLAGS.node_embedding_dim,
     use_batch_norm=FLAGS.use_batch_norm,
-    weight_sharing=FLAGS.weight_sharing) if not FLAGS.use_gnf else GNFBlock(
-        make_gnn_fn=MAKE_GNN_FN,
-        num_timesteps=FLAGS.num_coupling_layers,
-        node_embedding_dim=FLAGS.node_embedding_dim,
-        use_batch_norm=FLAGS.use_batch_norm,
-        weight_sharing=FLAGS.weight_sharing,
-        use_efficient_backprop=FLAGS.use_efficient_backprop)
+    weight_sharing=FLAGS.weight_sharing) 
+    # if not FLAGS.use_gnf else GNFBlock(
+    #     make_gnn_fn=MAKE_GNN_FN,
+    #     num_timesteps=FLAGS.num_coupling_layers,
+    #     node_embedding_dim=FLAGS.node_embedding_dim,
+    #     use_batch_norm=FLAGS.use_batch_norm,
+    #     weight_sharing=FLAGS.weight_sharing,
+    #     use_efficient_backprop=FLAGS.use_efficient_backprop)
 
 # Log prob(z).
 grevnet_reverse_output, log_det_jacobian = grevnet(graph_phs, inverse=True)
