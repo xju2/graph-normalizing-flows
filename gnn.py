@@ -4,114 +4,105 @@ from __future__ import print_function
 
 from math import sqrt
 
-from sonnet.python.modules import base
 import graph_nets as gn
 import sonnet as snt
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+from tensorflow.compat.v1.layers import BatchNormalization
+
 from loss import *
 
-fc = tf.contrib.layers.fully_connected
 tfb = tfp.bijectors
 
 
 # Blocks to update a node's embedding based on its neighbors' embeddings.
-class GRUBlock(snt.AbstractModule):
+class GRUBlock(snt.Module):
     def __init__(self,
                  output_dim,
                  num_layers=2,
                  latent_dim=256,
                  bias_init_stddev=0.01,
-                 agg_fn=tf.unsorted_segment_mean,
+                 agg_fn=tf.math.unsorted_segment_mean,
                  name="GRUBlock"):
         super(GRUBlock, self).__init__(name=name)
-        self.received_edges_aggregator = gn.blocks.ReceivedEdgesToNodesAggregator(
-            agg_fn)
+        self.received_edges_aggregator = gn.blocks.ReceivedEdgesToNodesAggregator(agg_fn)
         self.output_dim = int(output_dim)
         self.num_layers = num_layers
         self.latent_dim = latent_dim
         self.bias_init_stddev = bias_init_stddev
+        biases_initializer = snt.initializers.TruncatedNormal(stddev=self.bias_init_stddev)
 
-    def _build(self, graph):
+        self.encoder_l1 = snt.Linear(output_size=self.latent_dim, with_bias=False, name="start_linear_1")
+        self.encoder_l2 = snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name='start_linear_2')
+        self.encoder_mlp_layers = []
+        for idx in range(self.num_layers):
+            self.encoder_mlp_layers.append(
+                snt.Linear(output_size=self.latent_dim, name="linear_%d" % idx)
+            )
+        self.encoder_l3 = snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name='start_linear_3')
+
+        self.decoder_l1 = snt.Linear(output_size=self.latent_dim, with_bias=False, name="end_linear_1")
+        self.decoder_l2 = snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name='end_linear_2')
+        self.decoder_mlp_layers = []
+        for idx in range(self.num_layers):
+            self.decoder_mlp_layers.append(
+                snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name="decode_linear_%d" % idx)
+            )
+        self.decoder_l3 = snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name='end_linear_3')
+
+        # random naming convention. Need to check what does the g_t do.
+        self.fin_l1 = snt.Linear(output_size=self.latent_dim, with_bias=False, name="fin_linear_1")
+        self.fin_l2 = snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name='fin_linear_2')
+        self.fin_mlp_layers = []
+        for idx in range(self.num_layers):
+            self.fin_mlp_layers.append(
+                snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name="lafin_linear_%d" % idx)
+            )
+        self.fin_l3 = snt.Linear(output_size=self.latent_dim, b_init=biases_initializer, name='fin_linear_3')
+
+
+    def __call__(self, graph):
         nodes = graph.nodes
         aggn = self.received_edges_aggregator(graph)
-        biases_initializer = tf.initializers.truncated_normal(
-            self.bias_init_stddev)
+        biases_initializer = snt.initializers.TruncatedNormal(stddev=self.bias_init_stddev)
 
-        r_t = tf.nn.relu(
-            fc(aggn,
-               self.latent_dim,
-               activation_fn=None,
-               biases_initializer=None) +
-            fc(nodes,
-               self.latent_dim,
-               activation_fn=None,
-               biases_initializer=biases_initializer))
-        for _ in range(self.num_layers):
-            r_t = fc(r_t, self.latent_dim, activation_fn=tf.nn.relu)
-        r_t = fc(r_t,
-                 self.output_dim,
-                 activation_fn=tf.sigmoid,
-                 biases_initializer=biases_initializer)
+        # r_t
+        r_t = tf.nn.relu(self.encoder_l1(aggn) + self.encoder_l2(nodes))
+        for _, layer in enumerate(self.encoder_mlp_layers):
+            r_t = tf.nn.relu(layer(r_t))
+        r_t = tf.math.sigmoid(self.encoder_l3(r_t)) 
 
-        z_t = tf.nn.relu(
-            fc(aggn,
-               self.latent_dim,
-               activation_fn=None,
-               biases_initializer=None) +
-            fc(nodes,
-               self.latent_dim,
-               activation_fn=None,
-               biases_initializer=biases_initializer))
-        for _ in range(self.num_layers):
-            z_t = fc(z_t,
-                     self.latent_dim,
-                     activation_fn=tf.nn.relu,
-                     biases_initializer=biases_initializer)
-        z_t = fc(z_t,
-                 self.output_dim,
-                 activation_fn=tf.sigmoid,
-                 biases_initializer=biases_initializer)
+        # z_t
+        z_t = tf.nn.relu(self.decoder_l1(aggn) + self.decoder_l2(nodes))
+        for _, layer in enumerate(self.decoder_mlp_layers):
+            z_t = tf.nn.relu(layer(z_t))
+        z_t = tf.math.sigmoid(self.decoder_l3(z_t))
 
-        g_t = tf.nn.relu(
-            fc(aggn,
-               self.output_dim,
-               activation_fn=None,
-               biases_initializer=None) +
-            r_t * fc(nodes,
-                     self.output_dim,
-                     activation_fn=None,
-                     biases_initializer=biases_initializer))
-        for _ in range(self.num_layers):
-            g_t = fc(g_t,
-                     self.latent_dim,
-                     activation_fn=tf.nn.relu,
-                     biases_initializer=biases_initializer)
-        g_t = fc(g_t,
-                 self.output_dim,
-                 activation_fn=tf.tanh,
-                 biases_initializer=biases_initializer)
-
+        # g_t
+        g_t = tf.nn.relu(self.fin_l1(aggn) + r_t * self.fin_l2(nodes))
+        for _, layer in enumerate(self.fin_mlp_layers):
+            g_t = tf.nn.relu(layer(g_t))
+        g_t = tf.math.tanh(self.fin_l3(g_t))
+        
         new_nodes = (1 - z_t) * g_t + z_t * nodes
         return graph.replace(nodes=new_nodes)
 
 
-class ConcatThenMLPBlock(snt.AbstractModule):
+class ConcatThenMLPBlock(snt.Module):
     def __init__(self, aggn_fn, make_mlp_fn, name="AggThenMLPBlock"):
         super(ConcatThenMLPBlock, self).__init__(name=name)
         self._received_edges_aggregator = gn.blocks.ReceivedEdgesToNodesAggregator(
             aggn_fn)
         self._mlp = make_mlp_fn()
 
-    def _build(self, graph):
-        nodes = tf.concat(
-            [graph.nodes, self._received_edges_aggregator(graph)], axis=1)
+    def __call__(self, graph):
+        nodes = tf.concat([graph.nodes, self._received_edges_aggregator(graph)], axis=1)
         nodes = self._mlp(nodes)
         return graph.replace(nodes=nodes)
 
 
-class AggThenMLPBlock(snt.AbstractModule):
+class AggThenMLPBlock(snt.Module):
     def __init__(self, aggn_fn, make_mlp_fn, epsilon, name="AggThenMLPBlock"):
         super(AggThenMLPBlock, self).__init__(name=name)
         self._received_edges_aggregator = gn.blocks.ReceivedEdgesToNodesAggregator(
@@ -119,7 +110,7 @@ class AggThenMLPBlock(snt.AbstractModule):
         self._mlp = make_mlp_fn()
         self.epsilon = epsilon
 
-    def _build(self, graph):
+    def __call__(self, graph):
         nodes = self.epsilon * graph.nodes + self._received_edges_aggregator(
             graph)
         nodes = self._mlp(nodes)
@@ -127,8 +118,8 @@ class AggThenMLPBlock(snt.AbstractModule):
 
 
 # GNN that updates node embeddings based on the neighbor node embeddings.
-class IdentityModule(base.AbstractModule):
-    def _build(self, inputs):
+class IdentityModule(snt.Module):
+    def __call__(self, inputs):
         return tf.identity(inputs)
 
 
@@ -140,19 +131,18 @@ EDGE_BLOCK_OPT = {
 }
 
 
-class NodeBlockGNN(snt.AbstractModule):
+class NodeBlockGNN(snt.Module):
     def __init__(self,
                  node_block,
                  edge_block_opt=EDGE_BLOCK_OPT,
                  name="NodeBlockGNN"):
         super(NodeBlockGNN, self).__init__(name=name)
 
-        with self._enter_variable_scope():
-            self._edge_block = gn.blocks.EdgeBlock(
-                edge_model_fn=IdentityModule, **EDGE_BLOCK_OPT)
-            self._node_block = node_block
+        self._edge_block = gn.blocks.EdgeBlock(
+            edge_model_fn=IdentityModule, **EDGE_BLOCK_OPT)
+        self._node_block = node_block
 
-    def _build(self, graph):
+    def __call__(self, graph):
         return self._node_block(self._edge_block(graph))
 
 
@@ -168,19 +158,14 @@ def make_mlp_model(latent_dim,
         snt.nets.MLP(
             layers,
             activation=activation,
-            initializers={
-                'w': tf.initializers.glorot_normal(),
-                'b': tf.initializers.truncated_normal(stddev=bias_init_stddev),
-            },
-            #regularizers={
-                #'w': tf.contrib.layers.l2_regularizer(l2_regularizer_weight),
-                #'b': tf.contrib.layers.l2_regularizer(l2_regularizer_weight)
-            #},
+            # w_init=None,  # default: TruncatedNormal
+            w_init=tf.keras.initializers.GlorotNormal(),
+            b_init=snt.initializers.TruncatedNormal(stddev=bias_init_stddev),
             activate_final=False),
     ])
 
 
-class TimestepGNN(snt.AbstractModule):
+class TimestepGNN(snt.Module):
     """Runs the input GNN for num_processing_steps # of timesteps.
     """
 
@@ -214,7 +199,7 @@ class TimestepGNN(snt.AbstractModule):
             if use_layer_norm:
                 self._lns = [snt.LayerNorm() for _ in range(num_timesteps)]
 
-    def _build(self, input_op, is_training):
+    def __call__(self, input_op, is_training):
         output = input_op
         for i in range(self._num_timesteps):
             if self._use_batch_norm:
@@ -236,7 +221,7 @@ class TimestepGNN(snt.AbstractModule):
 
 
 def avg_then_mlp_gnn(make_mlp_fn, epsilon):
-    avg_then_mlp_block = AggThenMLPBlock(tf.unsorted_segment_mean, make_mlp_fn,
+    avg_then_mlp_block = AggThenMLPBlock(tf.math.unsorted_segment_mean, make_mlp_fn,
                                          epsilon)
     return NodeBlockGNN(avg_then_mlp_block)
 
@@ -253,12 +238,12 @@ def sum_concat_then_mlp_gnn(make_mlp_fn):
 
 
 def avg_concat_then_mlp_gnn(make_mlp_fn):
-    node_block = ConcatThenMLPBlock(tf.unsorted_segment_mean, make_mlp_fn)
+    node_block = ConcatThenMLPBlock(tf.math.unsorted_segment_mean, make_mlp_fn)
     return NodeBlockGNN(node_block)
 
 
 def make_batch_norm():
-    bn = tf.layers.BatchNormalization(
+    bn = BatchNormalization(
         axis=-1, gamma_constraint=lambda x: tf.nn.relu(x) + 1e-6)
     return tfb.BatchNormalization(batchnorm_layer=bn, training=True)
 
@@ -270,7 +255,7 @@ def get_gnns(num_timesteps, make_gnn_fn):
 def print_variable(v, v_name):
     return tf.Print(v, [v], "{} is: ".format(v_name), summarize=1000, first_n=1)
 
-class GRevNet(snt.AbstractModule):
+class GRevNet(snt.Module):
     def __init__(self,
                  make_gnn_fn,
                  num_timesteps,
@@ -374,69 +359,69 @@ class GRevNet(snt.AbstractModule):
 
     def log_prob(self, x):
         z, log_det_jacobian = self.f(x)
-        return tf.reduce_sum(self.prior.log_prob(z)) + log_det_jacobian
+        return tf.math.reduce_sum(self.prior.log_prob(z)) + log_det_jacobian
 
-    def _build(self, input, inverse=True):
+    def __call__(self, input, inverse=True):
         func = self.f if inverse else self.g
         return func(input)
 
 
 # Copied from graph_nets/modules.py and modified.
-class DMSelfAttention(snt.AbstractModule):
+class DMSelfAttention(snt.Module):
     """Multi-head self-attention module.
-  The module is based on the following three papers:
-   * A simple neural network module for relational reasoning (RNs):
+    The module is based on the following three papers:
+    * A simple neural network module for relational reasoning (RNs):
        https://arxiv.org/abs/1706.01427
-   * Non-local Neural Networks: https://arxiv.org/abs/1711.07971.
-   * Attention Is All You Need (AIAYN): https://arxiv.org/abs/1706.03762.
-  The input to the modules consists of a graph containing values for each node
-  and connectivity between them, a tensor containing keys for each node
-  and a tensor containing queries for each node.
-  The self-attention step consist of updating the node values, with each new
-  node value computed in a two step process:
-  - Computing the attention weights between each node and all of its senders
-   nodes, by calculating sum(sender_key*receiver_query) and using the softmax
-   operation on all attention weights for each node.
-  - For each receiver node, compute the new node value as the weighted average
-   of the values of the sender nodes, according to the attention weights.
-  - Nodes with no received edges, get an updated value of 0.
-  Values, keys and queries contain a "head" axis to compute independent
-  self-attention for each of the heads.
-  """
+    * Non-local Neural Networks: https://arxiv.org/abs/1711.07971.
+    * Attention Is All You Need (AIAYN): https://arxiv.org/abs/1706.03762.
+    The input to the modules consists of a graph containing values for each node
+    and connectivity between them, a tensor containing keys for each node
+    and a tensor containing queries for each node.
+    The self-attention step consist of updating the node values, with each new
+    node value computed in a two step process:
+    - Computing the attention weights between each node and all of its senders
+    nodes, by calculating sum(sender_key*receiver_query) and using the softmax
+    operation on all attention weights for each node.
+    - For each receiver node, compute the new node value as the weighted average
+    of the values of the sender nodes, according to the attention weights.
+    - Nodes with no received edges, get an updated value of 0.
+    Values, keys and queries contain a "head" axis to compute independent
+    self-attention for each of the heads.
+    """
 
     def __init__(self, kq_dim_division, kq_dim, name="dm_self_attention"):
         """Inits the module.
-    Args:
-      name: The module name.
-    """
+        Args:
+        name: The module name.
+        """
         super(DMSelfAttention, self).__init__(name=name)
         self._normalizer = gn.modules._unsorted_segment_softmax
         self._kq_dim_division = kq_dim_division
         self._kq_dim = kq_dim
 
-    def _build(self, node_values, node_keys, node_queries, attention_graph):
+    def __call__(self, node_values, node_keys, node_queries, attention_graph):
         """Connects the multi-head self-attention module.
-    The self-attention is only computed according to the connectivity of the
-    input graphs, with receiver nodes attending to sender nodes.
-    Args:
-      node_values: Tensor containing the values associated to each of the nodes.
-        The expected shape is [total_num_nodes, num_heads, key_size].
-      node_keys: Tensor containing the key associated to each of the nodes. The
-        expected shape is [total_num_nodes, num_heads, key_size].
-      node_queries: Tensor containing the query associated to each of the nodes.
-        The expected shape is [total_num_nodes, num_heads, query_size]. The
-        query size must be equal to the key size.
-      attention_graph: Graph containing connectivity information between nodes
-        via the senders and receivers fields. Node A will only attempt to attend
-        to Node B if `attention_graph` contains an edge sent by Node A and
-        received by Node B.
-    Returns:
-      An output `graphs.GraphsTuple` with updated nodes containing the
-      aggregated attended value for each of the nodes with shape
-      [total_num_nodes, num_heads, value_size].
-    Raises:
-      ValueError: if the input graph does not have edges.
-    """
+        The self-attention is only computed according to the connectivity of the
+        input graphs, with receiver nodes attending to sender nodes.
+        Args:
+        node_values: Tensor containing the values associated to each of the nodes.
+            The expected shape is [total_num_nodes, num_heads, key_size].
+        node_keys: Tensor containing the key associated to each of the nodes. The
+            expected shape is [total_num_nodes, num_heads, key_size].
+        node_queries: Tensor containing the query associated to each of the nodes.
+            The expected shape is [total_num_nodes, num_heads, query_size]. The
+            query size must be equal to the key size.
+        attention_graph: Graph containing connectivity information between nodes
+            via the senders and receivers fields. Node A will only attempt to attend
+            to Node B if `attention_graph` contains an edge sent by Node A and
+            received by Node B.
+        Returns:
+        An output `graphs.GraphsTuple` with updated nodes containing the
+        aggregated attended value for each of the nodes with shape
+        [total_num_nodes, num_heads, value_size].
+        Raises:
+        ValueError: if the input graph does not have edges.
+        """
 
         # Sender nodes put their keys and values in the edges.
         # [total_num_edges, num_heads, query_size]
@@ -477,7 +462,7 @@ class DMSelfAttention(snt.AbstractModule):
         return attention_graph.replace(nodes=aggregated_attended_values)
 
 
-class DMSelfAttentionMLP(snt.AbstractModule):
+class DMSelfAttentionMLP(snt.Module):
     def __init__(self,
                  kq_dim,
                  v_dim,
@@ -500,7 +485,7 @@ class DMSelfAttentionMLP(snt.AbstractModule):
         self.layer_norm = layer_norm
         self.kq_dim_division = kq_dim_division
 
-    def _build(self, graph):
+    def __call__(self, graph):
         initializers = {
             'w': tf.contrib.layers.xavier_initializer(uniform=True),
         }
@@ -573,7 +558,7 @@ def dm_self_attn_gnn(kq_dim,
                               kq_dim_division=kq_dim_division)
 
 
-class MultiheadSelfAttention(snt.AbstractModule):
+class MultiheadSelfAttention(snt.Module):
     def __init__(self,
                  kq_dim,
                  v_dim,
@@ -592,7 +577,7 @@ class MultiheadSelfAttention(snt.AbstractModule):
         self.kq_dim_division = kq_dim_division
         self.layer_norm = layer_norm
 
-    def _build(self, graph):
+    def __call__(self, graph):
         n_node = tf.shape(graph.nodes)[0]
         initializers = {
             'w': tf.contrib.layers.xavier_initializer(uniform=True),
@@ -676,7 +661,7 @@ def multihead_self_attn_gnn(kq_dim,
         layer_norm=layer_norm)
 
 
-class SelfAttention(snt.AbstractModule):
+class SelfAttention(snt.Module):
     def __init__(self,
                  kq_dim,
                  v_dim,
@@ -689,7 +674,7 @@ class SelfAttention(snt.AbstractModule):
         self.mlp = make_mlp_fn()
         self.kq_dim_division = kq_dim_division
 
-    def _build(self, graph):
+    def __call__(self, graph):
         n_node = tf.shape(graph.nodes)[0]
         initializers = {
             'w': tf.contrib.layers.xavier_initializer(uniform=True),
@@ -760,7 +745,7 @@ def loss_mask_padded(graph, max_n_node):
     return output.stack()
 
 
-class LatestSelfAttention(snt.AbstractModule):
+class LatestSelfAttention(snt.Module):
     def __init__(self,
                  kq_dim,
                  v_dim,
@@ -820,7 +805,7 @@ class LatestSelfAttention(snt.AbstractModule):
         x = tf.reshape(x, (self.train_batch_size, -1, self.num_heads, depth))
         return tf.transpose(x, perm=[0, 2, 1, 3])
 
-    def _build(self, graph):
+    def __call__(self, graph):
         # graph_batch_size = total number of graphs in the batch,
         # node_batch_size = total number of nodes in all the graphs in the
         # batch, so node_batch_size > graph_batch_size.
@@ -904,7 +889,7 @@ def pairwise_concat(nodes):
     return toret
 
 
-class AdditiveSelfAttention(snt.AbstractModule):
+class AdditiveSelfAttention(snt.Module):
     def __init__(self,
                  v_dim,
                  attn_mlp_fn,
@@ -919,7 +904,7 @@ class AdditiveSelfAttention(snt.AbstractModule):
         self.gnn_mlp = gnn_mlp_fn()
         self.scaling = scaling
 
-    def _build(self, graph):
+    def __call__(self, graph):
         initializers = {
             'w': tf.contrib.layers.xavier_initializer(uniform=True),
         }
@@ -982,7 +967,7 @@ def pairwise_concat_padded(nodes):
     return tf.concat([tile_as, tile_bs], axis=-1)
 
 
-class PaddedAdditiveSelfAttention(snt.AbstractModule):
+class PaddedAdditiveSelfAttention(snt.Module):
     def __init__(self,
                  v_dim,
                  attn_mlp_fn,
@@ -1024,7 +1009,7 @@ class PaddedAdditiveSelfAttention(snt.AbstractModule):
         final_output = tf.concat(to_concat, axis=0)
         return final_output
 
-    def _build(self, graph):
+    def __call__(self, graph):
         # train_batch_size = total number of graphs in the batch,
         # node_batch_size = total number of nodes in all the graphs in the
         # batch, so node_batch_size > graph_batch_size.

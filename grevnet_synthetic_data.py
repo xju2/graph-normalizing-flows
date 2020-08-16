@@ -43,7 +43,7 @@ class SyntheticDataset():
         return data_dicts
 
     def get_next_batch(self, batch_size):
-        return gn.utils_np.data_dicts_to_graphs_tuple(
+        return gn.utils_tf.data_dicts_to_graphs_tuple(
             self.get_next_batch_data_dicts(batch_size))
 
 
