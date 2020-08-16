@@ -187,17 +187,17 @@ class TimestepGNN(snt.Module):
         self._lns = []
         self._test_local_stats = test_local_stats
         self._use_layer_norm = use_layer_norm
-        with self._enter_variable_scope():
-            if not weight_sharing:
-                self._gnn = [make_gnn_fn() for _ in range(num_timesteps)]
-            else:
-                self._gnn = make_gnn_fn()
-            if use_batch_norm:
-                self._bns = [
-                    snt.BatchNorm(scale=True) for _ in range(num_timesteps)
-                ]
-            if use_layer_norm:
-                self._lns = [snt.LayerNorm() for _ in range(num_timesteps)]
+
+        if not weight_sharing:
+            self._gnn = [make_gnn_fn() for _ in range(num_timesteps)]
+        else:
+            self._gnn = make_gnn_fn()
+        if use_batch_norm:
+            self._bns = [
+                snt.BatchNorm(create_scale=True, create_offset=True) for _ in range(num_timesteps)
+            ]
+        if use_layer_norm:
+            self._lns = [snt.LayerNorm(axis=1, create_scale=True, create_offset=True) for _ in range(num_timesteps)]
 
     def __call__(self, input_op, is_training):
         output = input_op
@@ -227,13 +227,13 @@ def avg_then_mlp_gnn(make_mlp_fn, epsilon):
 
 
 def sum_then_mlp_gnn(make_mlp_fn, epsilon):
-    sum_then_mlp_block = AggThenMLPBlock(tf.unsorted_segment_sum, make_mlp_fn,
+    sum_then_mlp_block = AggThenMLPBlock(tf.math.unsorted_segment_sum, make_mlp_fn,
                                          epsilon)
     return NodeBlockGNN(sum_then_mlp_block)
 
 
 def sum_concat_then_mlp_gnn(make_mlp_fn):
-    node_block = ConcatThenMLPBlock(tf.unsorted_segment_sum, make_mlp_fn)
+    node_block = ConcatThenMLPBlock(tf.math.unsorted_segment_sum, make_mlp_fn)
     return NodeBlockGNN(node_block)
 
 
@@ -253,7 +253,7 @@ def get_gnns(num_timesteps, make_gnn_fn):
 
 
 def print_variable(v, v_name):
-    return tf.Print(v, [v], "{} is: ".format(v_name), summarize=1000, first_n=1)
+    return tf.print(v, [v], "{} is: ".format(v_name), summarize=1000, first_n=1)
 
 class GRevNet(snt.Module):
     def __init__(self,

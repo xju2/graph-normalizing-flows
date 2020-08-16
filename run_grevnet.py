@@ -331,22 +331,43 @@ def update_step(input_graph):
     grevnet_top = grevnet(sample_graph_phs, inverse=False)
     grevnet_top_nodes = grevnet_top.nodes
 
-    return total_loss, loss_per_node, log_det_jacobian, grevnet_reverse_output.nodes
+    values_map = {
+        "total_loss": total_loss.numpy(),
+        "loss_per_node": loss_per_node.numpy(), 
+        "log_det_jacobian": log_det_jacobian.numpy(),
+        "grevnet_bottom": grevnet_reverse_output.nodes.numpy(),
+        "grevnet_top_nodes": grevnet_top_nodes.numpy()
+    }
+    return values_map
 
 
 for iteration in range(FLAGS.num_train_iters + 1):
     input_graph = DATASET.get_next_batch(FLAGS.train_batch_size)
-    results = update_step(input_graph)
+    train_values = update_step(input_graph)
+    train_values['graph_phs_nodes'] = input_graph.nodes.numpy()
 
-    print("*" * 50)
-    print("iteration num: {}".format(iteration))
-    print("total_loss: {}".format(results[0].numpy()))
-    print("loss per node: {}".format(results[1].numpy()))
-    print("log det jacobian: {}".format(results[2].numpy()))
-    #print("grevnet bottom: {}".format(train_values["grevnet_bottom"]))
-    print("original mean {} std dev {}".format(
-        np.mean(input_graph.nodes.numpy(), 0),
-        np.std(input_graph.nodes.numpy(), 0)))
-    print("transformed mean {} std dev {}".format(
-        np.mean(results[3].numpy(), 0),
-        np.std(results[3].numpy(), 0)))
+    if iteration % FLAGS.log_every_n_steps == 0:
+        print("*" * 50)
+        print("iteration num: {}".format(iteration))
+        print("total_loss: {}".format(train_values["total_loss"]))
+        print("loss per node: {}".format(train_values["loss_per_node"]))
+        print("log det jacobian: {}".format(train_values["log_det_jacobian"]))
+        #print("grevnet bottom: {}".format(train_values["grevnet_bottom"]))
+        print("original mean {} std dev {}".format(
+            np.mean(train_values["graph_phs_nodes"], 0),
+            np.std(train_values["graph_phs_nodes"], 0)))
+        print("transformed mean {} std dev {}".format(
+            np.mean(train_values["grevnet_bottom"], 0),
+            np.std(train_values["grevnet_bottom"], 0)))
+
+    if iteration % FLAGS.write_imgs_every_n_steps == 0:
+        plot_data(train_values["grevnet_bottom"],
+                  os.path.join(imgs_dir, 'iter_{}_zs.png'.format(iteration)))
+        plot_data(train_values["grevnet_top_nodes"],
+                os.path.join(imgs_dir,
+                         'iter_{}_aggregated_x.png'.format(iteration)))
+        # for i in range(
+        #         min(FLAGS.train_batch_size, FLAGS.max_individual_samples)):
+        #     name = "generated_sample_{}".format(i)
+        #     outname = "iter_{}_generated_sample_{}.png".format(iteration, i)
+        #     plot_data(train_values[name], os.path.join(imgs_dir, outname))
