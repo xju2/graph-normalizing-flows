@@ -297,8 +297,6 @@ class GRevNet(snt.Module):
                 log_det_jacobian += bn.inverse_log_det_jacobian(x0.nodes, 2)
                 x0 = x0.replace(nodes=bn.inverse(x0.nodes))
             if self.weight_sharing:
-                #s = self.s[0][i](x0).nodes
-                #t = self.s[0][i](x0).nodes
                 s = self.s[0](x0).nodes
                 t = self.t[0](x0).nodes
             else:

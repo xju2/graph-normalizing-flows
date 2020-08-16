@@ -1,5 +1,5 @@
 {
-    "python.linting.pylintPath": "/global/homes/x/xju/.conda/envs/tf2.3/bin/pylint",
+    "python.linting.pylintPath": "/global/cfs/cdirs/atlas/xju/conda/envs/tf2.3/bin/pylint",
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true
 }
