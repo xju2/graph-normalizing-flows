@@ -135,8 +135,8 @@ def loss_mask(graph):
         return (i + 1, paddings_left, paddings_right, sizes, output)
 
     num_graphs = gn.utils_tf.get_num_graphs(graph)
-    paddings_left = tf.cumsum(graph.n_node, exclusive=True)
-    paddings_right = tf.cumsum(graph.n_node, reverse=True, exclusive=True)
+    paddings_left = tf.math.cumsum(graph.n_node, exclusive=True)
+    paddings_right = tf.math.cumsum(graph.n_node, reverse=True, exclusive=True)
     sizes = tf.stack([graph.n_node, graph.n_node], axis=1)
 
     loop_condition = lambda i, *_: tf.less(i, num_graphs)
@@ -144,10 +144,7 @@ def loss_mask(graph):
         0, paddings_left, paddings_right, sizes,
         tf.TensorArray(dtype=tf.float32, size=num_graphs, infer_shape=False)
     ]
-    _, _, _, _, output = tf.while_loop(loop_condition,
-                                       body,
-                                       initial_loop_vars,
-                                       back_prop=False)
+    _, _, _, _, output = tf.nest.map_structure(tf.stop_gradient, tf.while_loop(loop_condition, body, initial_loop_vars))
     return output.concat()
 
 

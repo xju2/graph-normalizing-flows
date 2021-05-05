@@ -453,7 +453,7 @@ class DMSelfAttention(snt.Module):
         # Summing all of the attended values from each node.
         # [total_num_nodes, num_heads, embedding_size]
         received_edges_aggregator = gn.blocks.ReceivedEdgesToNodesAggregator(
-            reducer=tf.unsorted_segment_sum)
+            reducer=tf.math.unsorted_segment_sum)
         aggregated_attended_values = received_edges_aggregator(
             attention_graph.replace(edges=attended_edges))
 
@@ -675,7 +675,7 @@ class SelfAttention(snt.Module):
     def __call__(self, graph):
         n_node = tf.shape(graph.nodes)[0]
         initializers = {
-            'w': tf.contrib.layers.xavier_initializer(uniform=True),
+            'w_init': tf.keras.initializers.GlorotUniform(),
         }
 
         project_q_mod = snt.Linear(self.kq_dim,
