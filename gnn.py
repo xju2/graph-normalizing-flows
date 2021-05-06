@@ -483,20 +483,20 @@ class DMSelfAttentionMLP(snt.Module):
         self.layer_norm = layer_norm
         self.kq_dim_division = kq_dim_division
 
-    def __call__(self, graph):
-        initializers = {
-            'w': tf.contrib.layers.xavier_initializer(uniform=True),
-        }
+        # >>> create NNs
 
         # [batch_size, num_heads * kq_dim].
-        project_q_mod = snt.Linear(self.num_heads * self.kq_dim,
-                                   use_bias=False,
-                                   initializers=initializers)
-        project_q = project_q_mod(graph.nodes)
-        project_k_mod = snt.Linear(self.num_heads * self.kq_dim,
-                                   use_bias=False,
-                                   initializers=initializers)
-        project_k = project_k_mod(graph.nodes)
+        self.project_q_mod = snt.Linear(self.num_heads * self.kq_dim, with_bias=False)
+        self.project_k_mod = snt.Linear(self.num_heads * self.kq_dim, with_bias=False)
+        self.project_v_mod = snt.Linear(self.v_dim, with_bias=False)
+        self.attn_module = DMSelfAttention(self.kq_dim_division, self.kq_dim)
+
+        self.new_node_proj = snt.Linear(self.concat_heads_output_dim, with_bias=False)
+
+    def __call__(self, graph):
+
+        project_q = self.project_q_mod(graph.nodes)
+        project_k = self.project_k_mod(graph.nodes)
 
         # At the end of this block, project_q_mod and project_k_mod are both
         # [batch_size, num_heads, kq_dim].
@@ -505,23 +505,17 @@ class DMSelfAttentionMLP(snt.Module):
 
         # At the end of this block, project_v is [batch_size, num_heads,
         # v_dim].
-        project_v_mod = snt.Linear(self.v_dim,
-                                   use_bias=False,
-                                   initializers=initializers)
-        project_v = project_v_mod(graph.nodes)
+        project_v = self.project_v_mod(graph.nodes)
         project_v = tf.keras.backend.repeat(project_v, self.num_heads)
 
-        attn_module = DMSelfAttention(self.kq_dim_division, self.kq_dim)
-        attn_graph = attn_module(project_v, project_q, project_k, graph)
+        attn_graph = self.attn_module(project_v, project_q, project_k, graph)
 
         # [batch_size, num_heads, v_dim].
         new_nodes = attn_graph.nodes
         new_nodes = tf.reshape(new_nodes, [-1, self.num_heads * self.v_dim])
 
         # At this point, new_nodes is [batch_size, num_heads * v_dim].
-        new_node_proj = snt.Linear(self.concat_heads_output_dim,
-                                   use_bias=False)
-        new_nodes = new_node_proj(new_nodes)
+        new_nodes = self.new_node_proj(new_nodes)
 
         if self.concat:
             new_nodes = tf.concat([graph.nodes, new_nodes], axis=1)
@@ -575,32 +569,27 @@ class MultiheadSelfAttention(snt.Module):
         self.kq_dim_division = kq_dim_division
         self.layer_norm = layer_norm
 
+
+        self.project_q_mod = snt.Linear(self.num_heads * self.kq_dim, with_bias=False)
+        self.project_k_mod = snt.Linear(self.num_heads * self.kq_dim, with_bias=False)
+        self.project_v_mod = snt.Linear(self.num_heads * self.v_dim,  with_bias=False)
+
     def __call__(self, graph):
         n_node = tf.shape(graph.nodes)[0]
         initializers = {
             'w': tf.contrib.layers.xavier_initializer(uniform=True),
         }
 
-        project_q_mod = snt.Linear(self.num_heads * self.kq_dim,
-                                   use_bias=False,
-                                   initializers=initializers)
-        project_k_mod = snt.Linear(self.num_heads * self.kq_dim,
-                                   use_bias=False,
-                                   initializers=initializers)
-        project_v_mod = snt.Linear(self.num_heads * self.v_dim,
-                                   use_bias=False,
-                                   initializers=initializers)
-
         # After this block, both have shape [num_heads, n_node, kq_dim].
-        project_q = tf.reshape(project_q_mod(graph.nodes),
+        project_q = tf.reshape(self.project_q_mod(graph.nodes),
                                [n_node, self.num_heads, self.kq_dim])
         project_q = tf.transpose(project_q, perm=[1, 0, 2])
-        project_k = tf.reshape(project_k_mod(graph.nodes),
+        project_k = tf.reshape(self.project_k_mod(graph.nodes),
                                [n_node, self.num_heads, self.kq_dim])
         project_k = tf.transpose(project_k, perm=[1, 0, 2])
 
         # Shape is [num_heads, n_node, v_dim].
-        project_v = tf.reshape(project_v_mod(graph.nodes),
+        project_v = tf.reshape(self.project_v_mod(graph.nodes),
                                [n_node, self.num_heads, self.v_dim])
         project_v = tf.transpose(project_v, perm=[1, 0, 2])
 
